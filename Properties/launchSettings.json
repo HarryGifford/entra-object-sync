@@ -1,0 +1,9 @@
+{
+  "profiles": {
+    "hk_auth_functions": {
+      "commandName": "Project",
+      "commandLineArgs": "--port 7060",
+      "launchBrowser": false
+    }
+  }
+}

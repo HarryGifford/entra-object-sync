@@ -1,0 +1,18 @@
+{
+    "id": "extbxkyswoo_havokUser",
+    "description": "Extra properties on users for use with Havok.",
+    "owner": "795be353-1aa5-47c5-89c2-604ef6690366",
+    "properties": [
+        {
+            "name": "githubUsername",
+            "type": "String"
+        },
+        {
+            "name": "hasUnrealEngineAccess",
+            "type": "Boolean"
+        }
+    ],
+    "targetTypes": [
+        "user"
+    ]
+}

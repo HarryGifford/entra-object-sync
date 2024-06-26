@@ -1,0 +1,30 @@
+{
+    "id": "exta4ltzss2_havokProject",
+    "description": "Extra properties for use with Havok.",
+    "owner": "795be353-1aa5-47c5-89c2-604ef6690366",
+    "properties": [
+        {
+            "name": "havokSdkVersion",
+            "type": "String"
+        },
+        {
+            "name": "havokUeVersion",
+            "type": "String"
+        },
+        {
+            "name": "hasHavokPhysics",
+            "type": "Boolean"
+        },
+        {
+            "name": "hasHavokCloth",
+            "type": "Boolean"
+        },
+        {
+            "name": "hasHavokNavigation",
+            "type": "Boolean"
+        }
+    ],
+    "targetTypes": [
+        "group"
+    ]
+}

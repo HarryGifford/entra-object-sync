@@ -1,0 +1,18 @@
+{
+    "displayName": "Havok : Havok - San Francisco : Test Project",
+    "description": "Group for project Havok - San Francisco : Test Project.",
+    "groupTypes": [
+        "Unified"
+    ],
+    "mailEnabled": false,
+    "mailNickname": "Havok_Havok_San_Francisco_Test_Project",
+    "visibility": "HiddenMembership",
+    "securityEnabled": false,
+    "exta4ltzss2_havokProject": {
+        "havokSdkVersion": "2024.1",
+        "havokUeVersion": "5.4.2-Release-2023.2",
+        "hasHavokPhysics": true,
+        "hasHavokCloth": true,
+        "hasHavokNavigation": true
+    }
+}
