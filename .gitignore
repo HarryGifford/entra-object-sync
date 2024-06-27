@@ -265,5 +265,6 @@ __pycache__/
 
 # Other
 __blobstorage__/
-__azurite_db_blob__.json
-__azurite_db_blob_extent__.json
+__queuestorage__/
+__tablestorage__/
+__azurite_db_*__.json
