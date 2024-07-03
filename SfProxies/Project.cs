@@ -2,6 +2,7 @@ using Newtonsoft.Json;
 using NetCoreForce.Client.Models;
 using NetCoreForce.Client.Attributes;
 using ZendeskApi_v2.Models.Organizations;
+using Havok.Attributes;
 
 namespace Havok.HkProjectCreate.SfProxies;
 
@@ -65,31 +66,21 @@ internal class Project : SObject {
         "With DevRel - Active AM" => "havok_servicelevelagreement_Client",
         _ => "havok_servicelevelagreement_No_Access",
     };
-}
 
-[JsonObject]
-internal class ProjectUpdate : SObject {
-    [JsonProperty(nameof(Zendesk_organization_id__c))]
-    [Updateable(true), Createable(true)]
-    public string? Zendesk_organization_id__c { get; set; }
-}
-
-[JsonObject]
-internal class ProjectExpanded : Project {
     [JsonProperty(nameof(Primary_Account_Manager__r))]
-    [Updateable(false), Createable(false)]
+    [Updateable(false), Createable(false), Gettable(false)]
     public Account? Primary_Account_Manager__r { get; set; }
 
     [JsonProperty(nameof(PrimaryOpportunity__r))]
-    [Updateable(false), Createable(false)]
+    [Updateable(false), Createable(false), Gettable(false)]
     public Opportunity? PrimaryOpportunity__r { get; set; }
 
     [JsonProperty(nameof(Publisher__r))]
-    [Updateable(false), Createable(false)]
+    [Updateable(false), Createable(false), Gettable(false)]
     public Account? Publisher__r { get; set; }
 
     [JsonProperty(nameof(Developer__r))]
-    [Updateable(false), Createable(false)]
+    [Updateable(false), Createable(false), Gettable(false)]
     public Account? Developer__r { get; set; }
 
     public Organization ToZendeskOrganization()

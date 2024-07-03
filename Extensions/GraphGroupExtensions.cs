@@ -13,10 +13,43 @@ public static class GraphOrganizationExtensions
     {
         var customFields = new Dictionary<string, object> {};
 
-        if (group.Extensions?.ExtensionAttribute1 != null)
+        List<string> tags = [];
+
+        group.Extensions?.ForEach(extension =>
         {
-            customFields.Add("github_username", group.OnPremisesExtensionAttributes.ExtensionAttribute1);
-        }
+            if (extension.Id == "exta4ltzss2_havokProject")
+            {
+                string? havokSdkVersion = extension.BackingStore.Get<string>("havokSdkVersion");
+                if (havokSdkVersion != null)
+                {
+                    customFields.Add("havok_project", havokSdkVersion);
+                }
+
+                string? havokUeVersion = extension.BackingStore.Get<string>("havokUeVersion");
+                if (havokUeVersion != null)
+                {
+                    customFields.Add("havok_ue_version", havokUeVersion);
+                }
+
+                bool? hasHavokNavigation = extension.BackingStore.Get<bool>("hasHavokNavigation");
+                if (hasHavokNavigation != null)
+                {
+                    tags.Add("product_navigation");
+                }
+
+                bool? hasHavokPhysics = extension.BackingStore.Get<bool>("hasHavokPhysics");
+                if (hasHavokPhysics != null)
+                {
+                    tags.Add("product_physics");
+                }
+
+                bool? hasHavokCloth = extension.BackingStore.Get<bool>("hasHavokCloth");
+                if (hasHavokCloth != null)
+                {
+                    tags.Add("product_cloth");
+                }
+            }
+        });
 
         return new()
         {
@@ -25,7 +58,8 @@ public static class GraphOrganizationExtensions
             ExternalId = group.Id,
             SharedComments = true,
             SharedTickets = true,
-            OrganizationFields = customFields
+            OrganizationFields = customFields,
+            Tags = tags
         };
     }
 

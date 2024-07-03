@@ -1,11 +1,12 @@
 using Newtonsoft.Json;
 using NetCoreForce.Client.Models;
 using NetCoreForce.Client.Attributes;
+using Havok.Attributes;
 
 namespace Havok.HkProjectCreate.SfProxies;
 
 [JsonObject]
-internal class Contact : SObject {
+internal class Contact : SObject, IHkUser {
     [JsonIgnore]
     public static string SObjectTypeName => "Contact";
 
@@ -31,8 +32,8 @@ internal class Contact : SObject {
     [JsonProperty(nameof(AccountId))]
     public string? AccountId { get; set; }
 
-    [JsonProperty(nameof(Zendesk_user_id__c))]
-    public string? Zendesk_user_id__c { get; set; }
+    [JsonProperty("Zendesk_user_id__c")]
+    public string? ZendeskId { get; set; }
 
     [JsonProperty(nameof(GitHub_Username__c))]
     public string? GitHub_Username__c { get; set; }
@@ -52,9 +53,13 @@ internal class Contact : SObject {
     [JsonProperty(nameof(Department))]
     public string? Department { get; set; }
 
+    [JsonProperty(nameof(CrudOperation))]
+    [Updateable(false), Createable(false), Gettable(false)]
+    public string? CrudOperation { get; set; }
+
     public HkAuthEvents.ZdProxies.User ToZendeskUser() => new()
     {
-        Id = Zendesk_user_id__c != null ? long.Parse(Zendesk_user_id__c) : null,
+        Id = ZendeskId != null ? long.Parse(ZendeskId) : null,
         Name = Name,
         Email = Email,
         Verified = true,

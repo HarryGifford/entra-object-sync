@@ -48,7 +48,6 @@ public static class GraphUserExtensions
             Name = endUser.DisplayName,
             Active = endUser.AccountEnabled,
             Email = endUser.Mail,
-            Role = "end-user",
             ExternalId = endUser.Id,
             Phone = endUser.MobilePhone ?? endUser.BusinessPhones?.FirstOrDefault(),
             CustomFields = customFields

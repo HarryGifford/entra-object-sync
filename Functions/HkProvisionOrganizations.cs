@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using Havok.Extensions;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Microsoft.Graph;
@@ -8,7 +9,8 @@ using ZdOrganization = ZendeskApi_v2.Models.Organizations.Organization;
 
 namespace Havok.Functions;
 
-public class IdLike<T>(long id) {
+public class IdLike<T>(long id)
+{
     public long Id => id;
 
     public override bool Equals([NotNullWhen(true)] object? obj)
@@ -50,13 +52,14 @@ public class HkProvisionOrganizations(ILogger<HkProvisionOrganizations> logger, 
     {
         // Collect all distinct user ids into a list.
         var groupIds = groups.Select(user => user.Id).Distinct().Chunk(chunkSize);
-        
+
         foreach (var chunk in groupIds)
         {
             var ZdOrganizations = zendeskClient.Organizations.GetMultipleOrganizationsByExternalIds(chunk);
             foreach (var zdOrganization in ZdOrganizations.Organizations)
             {
-                if (zdOrganization.Id.HasValue) {
+                if (zdOrganization.Id.HasValue)
+                {
                     _organizations[zdOrganization.ExternalId] = zdOrganization.Id.Value;
                 }
             }
@@ -65,7 +68,7 @@ public class HkProvisionOrganizations(ILogger<HkProvisionOrganizations> logger, 
 
     private void CreateOrUpdateGroups(IEnumerable<Group> groups)
     {
-        foreach (var group in groups)
+        foreach (Group group in groups)
         {
             if (group.Id is null)
             {
@@ -80,13 +83,10 @@ public class HkProvisionOrganizations(ILogger<HkProvisionOrganizations> logger, 
                 continue;
             }
 
-            var zdOrganization = new ZdOrganization
-            {
-                Name = group.DisplayName,
-                ExternalId = group.Id
-            };
+            var zdOrganization = group.ToZendeskOrganization();
 
-            try {
+            try
+            {
                 var createdOrganization = zendeskClient.Organizations.CreateOrganization(zdOrganization);
                 if (createdOrganization is null)
                 {
@@ -96,7 +96,9 @@ public class HkProvisionOrganizations(ILogger<HkProvisionOrganizations> logger, 
 
                 _organizations[group.Id] = createdOrganization.Organization.Id!.Value;
                 logger.LogInformation($"Organization {group.DisplayName} created in Zendesk.");
-            } catch (System.Net.WebException e) {
+            }
+            catch (System.Net.WebException e)
+            {
                 // If the organization already exists, update the mapping.
                 if (e.Response is System.Net.HttpWebResponse response && response.StatusCode == System.Net.HttpStatusCode.UnprocessableEntity)
                 {
@@ -107,7 +109,7 @@ public class HkProvisionOrganizations(ILogger<HkProvisionOrganizations> logger, 
                         logger.LogInformation($"Organization {group.DisplayName} not found in Zendesk.");
                         continue;
                     }
-                    
+
                     // Find organization with exact name.
                     var zdMatchingOrganization = zdOrganizations.Organizations.FirstOrDefault(org => org.Name == group.DisplayName);
                     if (zdMatchingOrganization is null)
@@ -129,7 +131,7 @@ public class HkProvisionOrganizations(ILogger<HkProvisionOrganizations> logger, 
 
     private void CreateUsers(IEnumerable<User> users)
     {
-        foreach (var user in users)
+        foreach (User user in users)
         {
             if (user.Id is null)
             {
@@ -144,14 +146,10 @@ public class HkProvisionOrganizations(ILogger<HkProvisionOrganizations> logger, 
                 continue;
             }
 
-            var zdUser = new ZendeskApi_v2.Models.Users.User
-            {
-                Name = user.DisplayName,
-                Email = user.Mail,
-                ExternalId = user.Id
-            };
+            var zdUser = user.ToZendeskUser();
 
-            try {
+            try
+            {
                 var createdUser = zendeskClient.Users.CreateUser(zdUser);
                 var zdUserIdOption = createdUser?.User?.Id;
                 if (zdUserIdOption is null)
@@ -162,7 +160,9 @@ public class HkProvisionOrganizations(ILogger<HkProvisionOrganizations> logger, 
 
                 UserExternalIdToId[user.Id] = new UserId(zdUserIdOption.Value);
                 logger.LogInformation($"User {user.DisplayName} created in Zendesk.");
-            } catch (System.Net.WebException e) {
+            }
+            catch (System.Net.WebException e)
+            {
                 // If the user already exists, update the mapping.
                 if (e.Response is System.Net.HttpWebResponse response && response.StatusCode == System.Net.HttpStatusCode.UnprocessableEntity)
                 {
@@ -173,7 +173,7 @@ public class HkProvisionOrganizations(ILogger<HkProvisionOrganizations> logger, 
                         logger.LogInformation($"User {user.DisplayName} not found in Zendesk.");
                         continue;
                     }
-                    
+
                     // Find user with exact email.
                     var zdMatchingUser = zdUsers.Users.FirstOrDefault(zdUser => zdUser.Email == user.Mail);
                     if (zdMatchingUser is null)
@@ -222,7 +222,8 @@ public class HkProvisionOrganizations(ILogger<HkProvisionOrganizations> logger, 
             }
 
             // Get the new members.
-            var newMembers = group.Members.Where(member => {
+            var newMembers = group.Members.Where(member =>
+            {
                 if (member.Id is null)
                 {
                     logger.LogError("Member ID should not be null.");
@@ -243,7 +244,8 @@ public class HkProvisionOrganizations(ILogger<HkProvisionOrganizations> logger, 
                 OrganizationId = zdOrganizationId
             });
 
-            if (newMembers.Any()) {
+            if (newMembers.Any())
+            {
                 var jobStatus = zendeskClient.Organizations.CreateManyOrganizationMemberships(newMembers);
                 while (jobStatus.JobStatus.Status != "completed")
                 {
@@ -256,24 +258,26 @@ public class HkProvisionOrganizations(ILogger<HkProvisionOrganizations> logger, 
             // Remove members that are no longer in the group.
             var removedMembers = existingMembers.Keys.Except(group.Members
                 .Where(member => member.Id is not null && UserExternalIdToId.ContainsKey(member.Id))
-                .Select(member => UserExternalIdToId[member.Id!]));
+                .Select(member => UserExternalIdToId[member.Id!]))
+                .ToList();
             foreach (var removedMember in removedMembers)
             {
                 var orgMembershipId = existingMembers[removedMember];
                 zendeskClient.Organizations.DeleteOrganizationMembership(orgMembershipId.Id);
-                logger.LogInformation($"User {removedMember} removed from group {group.DisplayName} in Zendesk.");
+                logger.LogInformation($"User {removedMember?.Id} removed from group {group.DisplayName} in Zendesk.");
                 modified = true;
             }
-            if (modified) {
+            if (modified)
+            {
                 logger.LogInformation($"Group {group.DisplayName} updated in Zendesk.");
             }
         }
     }
 
     [Function(nameof(HkProvisionOrganizations))]
-    public void Run([TimerTrigger("* */20 * * * *"
+    public void Run([TimerTrigger("0 0 0 0 0 0"
     #if DEBUG
-    , RunOnStartup = true
+    , RunOnStartup = false
     #endif
     )] TimerInfo myTimer)
     {
@@ -287,9 +291,10 @@ public class HkProvisionOrganizations(ILogger<HkProvisionOrganizations> logger, 
 
         logger.LogInformation("Getting groups from Microsoft Graph.");
 
-        GroupCollectionResponse groupsResponse = graphClient.Groups.GetAsync(config => {
-            config.QueryParameters.Select = ["displayName,id,description"];
-            config.QueryParameters.Expand = ["members($select=id)"];
+        GroupCollectionResponse groupsResponse = graphClient.Groups.GetAsync(config =>
+        {
+            config.QueryParameters.Select = ["displayName,id,description,exta4ltzss2_havokProject"];
+            config.QueryParameters.Expand = ["members($select=id,mail)"];
         }).Result!;
 
         List<Group> groups = groupsResponse.Value!;
@@ -313,7 +318,8 @@ public class HkProvisionOrganizations(ILogger<HkProvisionOrganizations> logger, 
         CreateOrUpdateGroups(groups);
         logger.LogInformation("Groups updated.");
         logger.LogInformation("Getting users from Microsoft Graph.");
-        UserCollectionResponse usersResponse = graphClient.Users.GetAsync(config => {
+        UserCollectionResponse usersResponse = graphClient.Users.GetAsync(config =>
+        {
             config.QueryParameters.Select = ["displayName,id,mail"];
         }).Result!;
 

@@ -1,6 +1,7 @@
 using Newtonsoft.Json;
 using NetCoreForce.Client.Models;
 using NetCoreForce.Client.Attributes;
+using Havok.Attributes;
 
 namespace Havok.HkProjectCreate.SfProxies;
 
@@ -55,6 +56,10 @@ internal class User : SObject {
 
     [JsonProperty(nameof(Github_Username__c))]
     public string? Github_Username__c { get; set; }
+
+    [JsonProperty(nameof(CrudOperation))]
+    [Updateable(false), Createable(false), Gettable(false)]
+    public string? CrudOperation { get; set; }
 
     public HkAuthEvents.ZdProxies.User ToZendeskUser() => new()
     {

@@ -1,3 +1,4 @@
+using System.Net;
 using Havok.HkProjectCreate.Extensions;
 using Havok.HkProjectCreate.SfProxies;
 using Microsoft.AspNetCore.Http;
@@ -5,7 +6,6 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
-using ZendeskApi_v2.Models.Organizations;
 
 namespace Havok.HkProjectCreate;
 
@@ -14,7 +14,9 @@ public class HkProjectCreate(
     NetCoreForce.Client.ForceClient salesforceClient,
     ZendeskApi_v2.ZendeskApi zendeskClient)
 {
-    private List<ProjectExpanded> GetProjectsByIds(IEnumerable<string> ids)
+    private readonly HkZendeskService zendeskService = new(logger, zendeskClient);
+
+    private List<Project> GetProjectsByIds(IEnumerable<string> ids)
     {
         var projectFields = SObjectExtensions.SObjectAttributes<Project>().ToList();
         var opportunityFields = SObjectExtensions.SObjectAttributes<Opportunity>().ToList();
@@ -32,7 +34,7 @@ public class HkProjectCreate(
 
         logger.LogInformation($"Querying Salesforce with the following query: {queryString}");
 
-        var projects = salesforceClient.Query<ProjectExpanded>(queryString).Result;
+        var projects = salesforceClient.Query<Project>(queryString).Result;
         return projects;
     }
 
@@ -57,6 +59,11 @@ public class HkProjectCreate(
 
     private Dictionary<string, List<Contact>> GetContactsByOpportunities(IEnumerable<string> opportunityIds)
     {
+        if (!opportunityIds.Any())
+        {
+            return [];
+        }
+
         var contactRoleFields = SObjectExtensions.SObjectAttributes<OpportunityContactRole>().ToList();
         var opportunityIdsInClause = string.Join(", ", opportunityIds.Select(id => $"'{id}'"));
 
@@ -68,7 +75,7 @@ public class HkProjectCreate(
 
         logger.LogInformation($"Querying Salesforce with the following query: {queryString}");
 
-        var contactRoles = salesforceClient.Query<OpportunityContactRoleExpanded>(queryString).Result;
+        var contactRoles = salesforceClient.Query<OpportunityContactRole>(queryString).Result;
 
         var contactRolesByOpportunities = contactRoles
             .GroupBy(contactRole => contactRole.OpportunityId!)
@@ -114,190 +121,71 @@ public class HkProjectCreate(
 
         return opportunityIds;
     }
-
-    private ZendeskApi_v2.Models.Shared.JobStatusResponse WaitForJobCompletion(ZendeskApi_v2.Models.Shared.JobStatusResponse job)
-    {
-        logger.LogInformation($"Waiting for job: {job.JobStatus.Url}");
-        for (var i = 0; i < 30; i++)
-        {
-            Task.Delay(500).Wait();
-            job = zendeskClient.JobStatuses.GetJobStatus(job.JobStatus.Id);
-
-            if (job.JobStatus.Status == "completed")
-            {
-                // Log any errors.
-                var errors = string.Join("\n", job.JobStatus.Results
-                    .Where(x => x.Status == "Failed")
-                    .Select(x => x.Details));
-                if (!string.IsNullOrEmpty(errors))
-                {
-                    logger.LogError($"Job completed with errors: {errors}");
-                }
-                break;
-            }
-
-            if (job.JobStatus.Status == "failed")
-            {
-                logger.LogError($"Job failed with message: {job.JobStatus.Message}");
-                break;
-            }
-
-            logger.LogInformation($"Job status: {job.JobStatus.Status}");
-        }
-
-        return job;
-    }
-
-    private void AssociateContactsWithZendeskOrganizations(IEnumerable<ProjectExpanded> projects, Dictionary<string, List<Contact>> contactsByOpportunityIds)
+    private void AssociateContactsWithZendeskOrganizations(IEnumerable<Project> projects, Dictionary<string, List<Contact>> contactsByOpportunityIds)
     {
         logger.LogInformation("Associating contacts with Zendesk organizations.");
-        foreach (ProjectExpanded project in projects)
+        foreach (Project project in projects)
         {
             var developerId = project.PrimaryOpportunity__c;
 
-            if (developerId != null && contactsByOpportunityIds.TryGetValue(developerId, out var developerContacts))
+            if (developerId == null || !contactsByOpportunityIds.TryGetValue(developerId, out List<Contact>? developerContacts))
             {
-                developerContacts = developerContacts.Where(contact => contact.Email != null).ToList();
-                logger.LogInformation($"Found {developerContacts.Count()} contacts for project with id {project.Id}.");
-
-                var contactsWithZendeskUserId = developerContacts.Where(contact => contact.Zendesk_user_id__c != null).ToList();
-
-                var contactsWithoutZendeskUserId = developerContacts.Where(contact => contact.Zendesk_user_id__c == null).ToList();
-                logger.LogInformation($"Creating {contactsWithoutZendeskUserId.Count()} Zendesk users for project with id {project.Id}.");
-
-                // Create users for the contacts without a Zendesk user id.
-                var users = contactsWithoutZendeskUserId.Select(contact => contact.ToZendeskUser());
-
-                foreach (var user in users)
-                {
-                    logger.LogInformation($"Creating Zendesk user with email {user.Email}.");
-                    var userResponse = zendeskClient.Users.CreateUser(user);
-                    if (userResponse?.User?.Id == null)
-                    {
-                        logger.LogError($"Failed to create Zendesk user with email {user.Email}.");
-                        return;
-                    }
-                    var id = userResponse.User.Id;
-                    logger.LogInformation($"Created Zendesk user with email {user.Email} and id {id}.");
-
-                    // Update the contact with the Zendesk user id.
-                    var contact = developerContacts.First(x => x.Email == user.Email);
-                    contact.Zendesk_user_id__c = id.ToString();
-                    var contactUpdate = new Contact
-                    {
-                        Id = contact.Id,
-                        Zendesk_user_id__c = id.ToString()
-                    };
-                    salesforceClient.UpdateRecord(Contact.SObjectTypeName, contact.Id, contactUpdate).Wait();
-                    logger.LogInformation($"Updated contact with id {contact.Id} with Zendesk user id {id}.");
-                }
-
-                foreach (var contact in contactsWithZendeskUserId)
-                {
-                    // Update Zendesk user with the latest information from Salesforce.
-                    var user = contact.ToZendeskUser();
-                    var userResponse = zendeskClient.Users.UpdateUser(user);
-                    if (userResponse?.User?.Id == null)
-                    {
-                        logger.LogError($"Failed to update Zendesk user with email {user.Email}.");
-                        return;
-                    }
-                }
-
-                /*var createUsersJob = zendeskClient.Users.BulkCreateUpdateUsers(users);
-
-                // Wait until the users are created.
-                createUsersJob = WaitForJobCompletion(createUsersJob);
-
-                var zendeskUserIds = createUsersJob.JobStatus.Results.Where(x => x.Error == null).ToList();
-
-                var contactsToUpdate = new List<SObject>(contactsWithoutZendeskUserId.Count);
-                // Update the contacts with the Zendesk user ids.
-                for (var idx = 0; idx < contactsWithoutZendeskUserId.Count; idx++)
-                {
-                    var zdUserIdPair = zendeskUserIds[idx];
-                    var userIndex = (int)zdUserIdPair.Index;
-                    if (userIndex < 0 || userIndex >= contactsWithoutZendeskUserId.Count)
-                    {
-                        logger.LogError($"User index {userIndex} is out of range.");
-                        continue;
-                    }
-                    logger.LogInformation($"User index {userIndex} is in range.");
-                    var currContact = contactsWithoutZendeskUserId[userIndex];
-                    currContact.Zendesk_user_id__c = zdUserIdPair.Id.ToString();
-                    var contact = new Contact
-                    {
-                        Id = currContact.Id,
-                        Zendesk_user_id__c = zdUserIdPair.Id.ToString()
-                    };
-
-                    salesforceClient.UpdateRecord(Contact.SObjectTypeName, currContact.Id, contact).Wait();
-                    logger.LogInformation($"Updated contact with id {currContact.Id} with Zendesk user id {zdUserIdPair.Id}.");
-                }*/
-
-                //var updateRecordsResult = salesforceClient.UpdateRecords(contactsToUpdate).Result;
-                //logger.LogInformation($"Updated {updateRecordsResult.Count()} Salesforce contacts with Zendesk user ids.");
-
-                /*foreach (var result in updateRecordsResult.Where(x => !x.Success))
-                {
-                    logger.LogError($"Failed to update contact with id {result.Id} with error: {result.Errors}");
-                    return;
-                }*/
-
-                logger.LogInformation($"Added {contactsWithoutZendeskUserId.Count()} Salesforce contacts to Zendesk for project with id {project.Id}.");
-
-                // Associate the contacts with the Zendesk organization.
-                if (string.IsNullOrEmpty(project.Zendesk_organization_id__c))
-                {
-                    logger.LogError($"Project with id {project.Id} does not have a Zendesk organization id.");
-                    return;
-                }
-                var organizationId = long.Parse(project.Zendesk_organization_id__c);
-
-                // Get the current associations on the organization.
-                var associations = zendeskClient.Organizations.GetOrganizationMembershipsByOrganizationId(organizationId, 100);
-
-                // Remove associations that are not in the developer contacts.
-                var associationsToRemove = associations.OrganizationMemberships
-                    .Where(association => developerContacts.All(contact => contact.Zendesk_user_id__c != association.UserId.ToString()))
-                    .Select(association => association.Id)
-                    .Where(id => id != null)
-                    .Select(id => id!.Value);
-
-                if (associationsToRemove.Any())
-                {
-                    var destroyManyOrganizationMembershipsJob = zendeskClient.Organizations.DestroyManyOrganizationMemberships(associationsToRemove);
-                    destroyManyOrganizationMembershipsJob = WaitForJobCompletion(destroyManyOrganizationMembershipsJob);
-                    if (destroyManyOrganizationMembershipsJob.JobStatus.Status == "completed")
-                    {
-                        logger.LogInformation($"Removed {associationsToRemove.Count()} associations from the organization with id {organizationId}.");
-                    }
-                }
-
-                // Add associations that are not in the organization.
-                var associationsToAdd = developerContacts
-                    .Where(contact => !associations.OrganizationMemberships.Any(association => association.UserId.ToString() == contact.Zendesk_user_id__c))
-                    .Select(contact =>
-                    {
-                        var zdUserId = long.Parse(contact.Zendesk_user_id__c!);
-                        logger.LogInformation($"Adding association for contact with id {contact.Id}, Zendesk user id {zdUserId} with organization {organizationId}.");
-                        return new OrganizationMembership
-                        {
-                            UserId = zdUserId,
-                            OrganizationId = organizationId
-                        };
-                    });
-
-                if (associationsToAdd.Any())
-                {
-                    var createManyOrganizationMembershipsJob = zendeskClient.Organizations.CreateManyOrganizationMemberships(associationsToAdd);
-                    createManyOrganizationMembershipsJob = WaitForJobCompletion(createManyOrganizationMembershipsJob);
-                    if (createManyOrganizationMembershipsJob.JobStatus.Status == "completed")
-                    {
-                        logger.LogInformation($"Added {associationsToAdd.Count()} associations to the organization with id {organizationId}.");
-                    }
-                }
+                developerContacts = [];
             }
+            developerContacts = developerContacts.Where(contact => contact.Email != null).ToList();
+            logger.LogInformation($"Found {developerContacts.Count()} contacts for project with id {project.Id}.");
+
+            var contactsWithZendeskUserId = developerContacts.Where(contact => contact.ZendeskId != null).ToList();
+
+            var contactsWithoutZendeskUserId = developerContacts.Where(contact => contact.ZendeskId == null).ToList();
+            logger.LogInformation($"Creating {contactsWithoutZendeskUserId.Count()} Zendesk users for project with id {project.Id}.");
+
+            if (project.PrimaryOpportunity__r != null)
+            {
+                project.PrimaryOpportunity__r.OpportunityContactRoles = developerContacts
+                    .Select(contact => new OpportunityContactRole
+                    {
+                        Id = null!,
+                        OpportunityId = project.PrimaryOpportunity__c,
+                        Contact = contact,
+                        ContactId = contact.Id
+                    }).ToList();
+            }
+
+            // Create users for the contacts without a Zendesk user id.
+            var users = contactsWithoutZendeskUserId.Select(contact => contact.ToZendeskUser());
+
+            var createdUsers = zendeskService.CreateOrUpdateUsers(project.Zendesk_organization_id__c!, users);
+
+            var developerContactsByEmail = developerContacts.ToDictionary(x => x.Email!);
+
+            // Update Salesforce contacts with the Zendesk user id.
+
+            logger.LogInformation($"Updating {createdUsers.Count()} Salesforce contacts with Zendesk user ids.");
+            foreach (var createdUser in createdUsers)
+            {
+                var contact = developerContactsByEmail.GetValueOrDefault(createdUser.Email!);
+                if (contact == null)
+                {
+                    logger.LogError($"Failed to find contact with email {createdUser.Email}.");
+                    return;
+                }
+                contact.ZendeskId = createdUser.ZendeskId;
+                var contactUpdate = new Contact
+                {
+                    Id = contact.Id,
+                    ZendeskId = createdUser.ZendeskId
+                };
+                salesforceClient.UpdateRecord(Contact.SObjectTypeName, contact.Id, contactUpdate).Wait();
+                logger.LogInformation($"Updated contact with id {contact.Id} with Zendesk user id {createdUser.ZendeskId}.");
+            }
+
+            logger.LogInformation($"Added {contactsWithoutZendeskUserId.Count()} Salesforce contacts to Zendesk for project with id {project.Id}.");
+
+            zendeskService.CreateOrUpdateGroupMemberships(
+                project.Zendesk_organization_id__c!,
+                developerContacts.Where(x => x.Id != null && x.Email != null)
+            );
         }
         logger.LogInformation("Finished associating contacts with Zendesk organizations.");
     }
@@ -306,8 +194,9 @@ public class HkProjectCreate(
     {
         foreach (var project in projects)
         {
-            ProjectUpdate updatedProject = new()
+            Project updatedProject = new()
             {
+                Id = null!,
                 Zendesk_organization_id__c = project.Zendesk_organization_id__c
             };
             salesforceClient.UpdateRecord(Project.SObjectTypeName, project.Id, updatedProject).Wait();
@@ -360,42 +249,44 @@ public class HkProjectCreate(
         {
             var organization = project.ToZendeskOrganization();
 
-            if (organization.Id == null) {
+            if (organization.Id == null)
+            {
                 logger.LogInformation($"Creating organization for project with id {project.Id}.");
-                var orgCreated = zendeskClient.Organizations.CreateOrganization(organization);
-                project.Zendesk_organization_id__c = orgCreated.Organization.Id.ToString();
+                try
+                {
+                    var orgCreated = zendeskClient.Organizations.CreateOrUpdateOrganization(organization);
+                    project.Zendesk_organization_id__c = orgCreated.Organization.Id.ToString();
+                }
+                catch (WebException e)
+                {
+                    logger.LogError($"Check if organization for {project.Id} already exists.");
+                    var matchingOrg = zendeskClient.Organizations.GetOrganizationsStartingWith(organization.Name)?.Organizations.FirstOrDefault(x => x.Name == organization.Name);
+                    if (matchingOrg != null)
+                    {
+                        project.Zendesk_organization_id__c = matchingOrg.Id.ToString();
+                        organization.Id = matchingOrg.Id;
+                        zendeskClient.Organizations.UpdateOrganization(organization);
+                    }
+                    else
+                    {
+                        // Return the error if the organization does not exist.
+                        return new BadRequestObjectResult(e);
+                    }
+                }
 
                 logger.LogInformation($"Created organization with id {project.Zendesk_organization_id__c} for project with id {project.Id}.");
-                salesforceClient.UpdateRecord(Project.SObjectTypeName, project.Id, new ProjectUpdate
+                salesforceClient.UpdateRecord(Project.SObjectTypeName, project.Id, new Project
                 {
+                    Id = null!,
                     Zendesk_organization_id__c = project.Zendesk_organization_id__c
                 }).Wait();
-            } else {
+            }
+            else
+            {
                 logger.LogInformation($"Updating organization with id {organization.Id} for project with id {project.Id}.");
                 zendeskClient.Organizations.UpdateOrganization(organization);
             }
-
-            /*var createdOrganization = zendeskClient.Organizations.CreateOrganization(organization);
-
-            var zendeskOrganizationId = createdOrganization?.Organization?.Id;
-
-            if (zendeskOrganizationId == null)
-            {
-                logger.LogError($"Failed to create organization for project with id {project.Id}.");
-                return;
-            }
-
-            logger.LogInformation($"Created organization with id {zendeskOrganizationId} for project with id {project.Id}.");
-            project.Zendesk_organization_id__c = zendeskOrganizationId.ToString();*/
         }
-
-        //UpdateSalesforceZendeskProjectId(projects);
-        //logger.LogInformation("Finished updating Salesforce with the Zendesk organization ids.");
-
-        /*var projectAccountIds = GetProjectAccountIds(projectIds);
-        logger.LogInformation($"Found {projectAccountIds.Count} account ids.");
-        var contactsByAccountIds = GetContactsByAccountIds(projectAccountIds);
-        logger.LogInformation($"Found {contactsByAccountIds.Count} account ids.");*/
 
         var projectOpportunityIds = GetProjectOpportunityIds(projectIds);
         logger.LogInformation($"Found {projectOpportunityIds.Count} opportunity ids.");

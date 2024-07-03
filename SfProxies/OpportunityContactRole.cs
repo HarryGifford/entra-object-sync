@@ -1,6 +1,7 @@
 using Newtonsoft.Json;
 using NetCoreForce.Client.Models;
 using NetCoreForce.Client.Attributes;
+using Havok.Attributes;
 
 namespace Havok.HkProjectCreate.SfProxies;
 
@@ -22,13 +23,13 @@ internal class OpportunityContactRole : SObject {
 
     [JsonProperty(nameof(Role))]
     public string? Role { get; set; }
-}
 
-internal class OpportunityContactRoleExpanded : OpportunityContactRole {
     [JsonProperty(nameof(Contact))]
+    [Gettable(false)]
     public Contact? Contact { get; set; }
 
     [JsonProperty(nameof(Opportunity))]
+    [Updateable(false), Createable(false), Gettable(false)]
     public Opportunity? Opportunity { get; set; }
 
     public ZendeskApi_v2.Models.Users.User? ToZendeskUser() => Contact?.ToZendeskUser();
