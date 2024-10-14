@@ -28,6 +28,18 @@ internal class Project : SObject {
     [Updateable(true), Createable(true)]
     public string? Secondary_Account_Manager__c { get; set; }
 
+    [JsonProperty(nameof(Account_Manager_Primary__c))]
+    [Updateable(true), Createable(true)]
+    public string? Account_Manager_Primary__c { get; set; }
+
+    [JsonProperty(nameof(Account_Manager_Secondary__c))]
+    [Updateable(true), Createable(true)]
+    public string? Account_Manager_Secondary__c { get; set; }
+
+    [JsonProperty(nameof(Account_Manager_Tertiary__c))]
+    [Updateable(true), Createable(true)]
+    public string? Account_Manager_Tertiary__c { get; set; }
+
     [JsonProperty(nameof(PrimaryOpportunity__c))]
     [Updateable(true), Createable(true)]
     public string? PrimaryOpportunity__c { get; set; }
@@ -60,6 +72,14 @@ internal class Project : SObject {
     [Updateable(true), Createable(true)]
     public string? Zendesk_organization_id__c { get; set; }
 
+    [JsonProperty(nameof(UE4_Integration_GitHub_Access__c))]
+    [Updateable(true), Createable(true)]
+    public bool? UE4_Integration_GitHub_Access__c { get; set; }
+
+    [JsonProperty(nameof(Physics_Engine__c))]
+    [Updateable(true), Createable(true)]
+    public string? Physics_Engine__c { get; set; }
+
     protected string SlaFromProject() => Support_Management_Status__c switch
     {
         "With FAE - Evaluation" => "havok_servicelevelagreement_Evaluator",
@@ -67,9 +87,17 @@ internal class Project : SObject {
         _ => "havok_servicelevelagreement_No_Access",
     };
 
-    [JsonProperty(nameof(Primary_Account_Manager__r))]
+    [JsonProperty(nameof(Account_Manager_Primary__r))]
     [Updateable(false), Createable(false), Gettable(false)]
-    public Account? Primary_Account_Manager__r { get; set; }
+    public User? Account_Manager_Primary__r { get; set; }
+
+    [JsonProperty(nameof(Account_Manager_Secondary__r))]
+    [Updateable(false), Createable(false), Gettable(false)]
+    public User? Account_Manager_Secondary__r { get; set; }
+
+    [JsonProperty(nameof(Account_Manager_Tertiary__r))]
+    [Updateable(false), Createable(false), Gettable(false)]
+    public User? Account_Manager_Tertiary__r { get; set; }
 
     [JsonProperty(nameof(PrimaryOpportunity__r))]
     [Updateable(false), Createable(false), Gettable(false)]
@@ -95,7 +123,9 @@ internal class Project : SObject {
         var zdId = Zendesk_organization_id__c;
         var sla = SlaFromProject();
         var tags = new List<string>();
-        TagsFromProjectProducts(tags);
+        var productTags = new List<string>();
+        TagsFromProjectProducts(productTags);
+        var orgEngineTag = UE4_Integration_GitHub_Access__c != null ? "org_engine_unreal" : "org_engine_custom";
         var clientPriority = PriorityFromProject();
         var customerType = sla == "havok_servicelevelagreement_Evaluator" ? "havok_type_Evaluation" : "havok_type_Support";
 
@@ -130,6 +160,18 @@ internal class Project : SObject {
 
         orgGroup = sla == "havok_servicelevelagreement_Evaluator" ? faeId : orgGroup;
 
+        string? primaryAccountManagerLookupValue = Account_Manager_Primary__r?.FederationIdentifier != null
+            ? $"external_id:{Account_Manager_Primary__r.FederationIdentifier}"
+            : null;
+
+        string? secondaryAccountManagerLookupValue = Account_Manager_Secondary__r?.FederationIdentifier != null
+            ? $"external_id:{Account_Manager_Secondary__r.FederationIdentifier}"
+            : null;
+
+        string? tertiaryAccountManagerLookupValue = Account_Manager_Tertiary__r?.FederationIdentifier != null
+            ? $"external_id:{Account_Manager_Tertiary__r.FederationIdentifier}"
+            : null;
+
         var organization = new Organization
         {
             Id = zdId != null ? long.Parse(zdId) : null,
@@ -147,7 +189,12 @@ internal class Project : SObject {
                 { "org_disabled", accountInactive },
                 { "havok_version", havokVersion ?? null },
                 { "havok_clientpriority_deprecated", clientPriority ?? null },
-                { "customer_type", customerType }
+                { "customer_type", customerType },
+                { "primary_account_manager", primaryAccountManagerLookupValue },
+                { "secondary_account_manager", secondaryAccountManagerLookupValue },
+                { "tertiary_account_manager", tertiaryAccountManagerLookupValue },
+                { "havok_products", productTags },
+                { "org_engine", orgEngineTag }
             }
         };
         return organization;
@@ -171,46 +218,63 @@ internal class Project : SObject {
         var developerName = Developer__r?.Account_Name_Simplified__c ?? Developer__r?.Account_Display_Name__c;
         var projectName = Name;
 
-        if (Publisher__c == Developer__c || Developer__c == null)
+        // Only have the project name -- check that it's not empty.
+        if (string.IsNullOrWhiteSpace(publisherName) && string.IsNullOrWhiteSpace(developerName))
         {
-            return $"{publisherName} : {projectName}";
+            if (string.IsNullOrWhiteSpace(projectName))
+            {
+                throw new InvalidOperationException("Project must have a name, publisher, or developer.");
+            }
+            return projectName;
         }
-        else if (Publisher__c == null)
+
+        // Only have the publisher name.
+        if (publisherName == developerName || string.IsNullOrWhiteSpace(developerName))
         {
-            return $"{developerName} : {projectName}";
+            return $"{projectName} : {publisherName}";
+        }
+        // Merge names like "Ubisoft : Ubisoft Blah" into "Ubisoft : Blah".
+        else if (string.IsNullOrWhiteSpace(publisherName) || developerName.StartsWith(publisherName))
+        {
+            return $"{projectName} : {developerName}";
         }
         else
         {
-            return $"{publisherName} : {developerName} : {projectName}";
+            return $"{projectName} : {developerName} : {publisherName}";
         }
     }
 
     protected void TagsFromProjectProducts(IList<string> tags)
     {
-        var opportunity = PrimaryOpportunity__r;
-        if (opportunity == null)
-        {
-            return;
-        }
-
-        if (opportunity.Havok_AI__c == true)
+        var products = Products__c != null ? Products__c.Split(";") : [];
+        if (products.Contains("AI") || products.Contains("Navigation"))
         {
             tags.Add("product_navigation");
         }
-
-        if (opportunity.Havok_Physics__c == true)
+        
+        if (products.Contains("Physics"))
         {
             tags.Add("product_physics");
         }
 
-        if (opportunity.Havok_Animation__c == true)
+        if (products.Contains("Animation"))
         {
             tags.Add("product_animation");
         }
 
-        if (opportunity.Cloth__c == true)
+        if (products.Contains("Cloth"))
         {
             tags.Add("product_cloth");
+        }
+
+        if (products.Contains("Destruction"))
+        {
+            tags.Add("product_destruction");
+        }
+
+        if (products.Contains("Script"))
+        {
+            tags.Add("product_script");
         }
     }
 }

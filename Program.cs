@@ -6,6 +6,7 @@ using Havok.Services;
 using Microsoft.Extensions.Logging;
 using Microsoft.Graph;
 using Azure.Identity;
+using Havok;
 
 var host = new HostBuilder()
     .ConfigureFunctionsWebApplication()
@@ -35,11 +36,12 @@ var host = new HostBuilder()
         });
 
         logger?.LogInformation("Adding Zendesk service.");
-        services.AddScoped<IZendeskApi, ZendeskApi>();
-        var zendeskApi = new ZendeskApi(
-            context.Configuration["Zendesk.EndpointUri"],
-            context.Configuration["Zendesk.Username"],
-            context.Configuration["Zendesk.ApiToken"]
+        services.AddScoped<IZendeskApi, ZendeskService>();
+        var zendeskApi = new ZendeskService(
+            context.Configuration["Zendesk.EndpointUri"]!,
+            context.Configuration["Zendesk.Username"]!,
+            null!,
+            context.Configuration["Zendesk.ApiToken"]!
         );
         services.AddSingleton(zendeskApi);
 

@@ -27,6 +27,9 @@ internal class User : SObject {
     [JsonProperty(nameof(Username))]
     public string? Username { get; set; }
 
+    [JsonProperty(nameof(Alias))]
+    public string? Alias { get; set; }
+
     [JsonProperty(nameof(FirstName))]
     public string? FirstName { get; set; }
 
@@ -47,6 +50,15 @@ internal class User : SObject {
 
     [JsonProperty(nameof(LocaleSidKey))]
     public string? LocaleSidKey { get; set; }
+
+    [JsonProperty(nameof(LanguageLocaleKey))]
+    public string? LanguageLocaleKey { get; set; }
+
+    [JsonProperty(nameof(EmailEncodingKey))]
+    public string? EmailEncodingKey { get; set; }
+
+    [JsonProperty(nameof(ProfileId))]
+    public string? ProfileId { get; set; }
 
     [JsonProperty(nameof(FederationIdentifier))]
     public string? FederationIdentifier { get; set; }
